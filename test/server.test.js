@@ -85,6 +85,16 @@ test('GET /definitely-not-a-path returns a non-5xx status', async () => {
   assert.ok(res.status >= 400 && res.status < 500, `expected 4xx, got ${res.status}`);
 });
 
+test('GET /health, GET /health, GET / sequence: each within 2s, none 5xx', async () => {
+  for (const p of ['/health', '/health', '/']) {
+    const startedAt = Date.now();
+    const res = await request('GET', p);
+    const elapsed = Date.now() - startedAt;
+    assert.ok(res.status < 500, `expected non-5xx for ${p}, got ${res.status}`);
+    assert.ok(elapsed < 2000, `GET ${p} took ${elapsed}ms`);
+  }
+});
+
 test('server survives a malformed POST body to /health', async () => {
   const res = await request('POST', '/health', '{not json');
   assert.ok(Number.isInteger(res.status), 'expected a complete response');
@@ -94,6 +104,59 @@ test('after malformed request, GET /health still returns 200 ok:true', async () 
   const res = await request('GET', '/health');
   assert.equal(res.status, 200);
   assert.equal(JSON.parse(res.body).ok, true);
+});
+
+test('POST {"truncated to any path answers within 2s and health stays ok', async () => {
+  for (const p of ['/', '/definitely-not-a-path', '/health']) {
+    const startedAt = Date.now();
+    const res = await request('POST', p, '{"truncated');
+    const elapsed = Date.now() - startedAt;
+    assert.ok(Number.isInteger(res.status), `expected a complete response for ${p}`);
+    assert.ok(elapsed < 2000, `POST ${p} took ${elapsed}ms`);
+
+    const health = await request('GET', '/health');
+    assert.equal(health.status, 200);
+    assert.equal(JSON.parse(health.body).ok, true);
+  }
+});
+
+test('2MB junk body gets a complete response and health stays ok', async () => {
+  const buf = Buffer.alloc(2 * 1024 * 1024);
+  for (let i = 0; i < buf.length; i++) buf[i] = (i * 31 + 7) & 0xff;
+  const res = await request('POST', '/', buf);
+  assert.ok(Number.isInteger(res.status), 'expected a complete response');
+
+  const health = await request('GET', '/health');
+  assert.equal(health.status, 200);
+  assert.equal(JSON.parse(health.body).ok, true);
+});
+
+test('arbitrary bytes (NULs, invalid UTF-8) get a complete response and health stays ok', async () => {
+  const buf = Buffer.alloc(4096);
+  for (let i = 0; i < buf.length; i++) buf[i] = i % 256;
+  const res = await request('POST', '/definitely-not-a-path', buf);
+  assert.ok(Number.isInteger(res.status), 'expected a complete response');
+
+  const health = await request('GET', '/health');
+  assert.equal(health.status, 200);
+  assert.equal(JSON.parse(health.body).ok, true);
+});
+
+test('sustained burst of abusive bodies across paths never breaks health', async () => {
+  const paths = ['/', '/definitely-not-a-path', '/health'];
+  const bodies = [
+    '{"truncated',
+    'plain junk, not json at all',
+    Buffer.from([0, 255, 1, 254, 0, 128, 129, 200, 0]),
+  ];
+  for (let i = 0; i < 50; i++) {
+    const res = await request('POST', paths[i % paths.length], bodies[i % bodies.length]);
+    assert.ok(Number.isInteger(res.status), `expected a complete response on iteration ${i}`);
+  }
+
+  const health = await request('GET', '/health');
+  assert.equal(health.status, 200);
+  assert.equal(JSON.parse(health.body).ok, true);
 });
 
 test('backslash request target gets 404 and the process survives', async () => {
