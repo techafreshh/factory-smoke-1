@@ -9,7 +9,13 @@ const server = http.createServer((req, res) => {
   res.on('error', () => {});
 
   // The body is never read, so malformed request bodies cannot reach any parsing code.
-  const pathname = new URL(req.url, 'http://localhost').pathname;
+  // Targets llhttp accepts but the WHATWG parser rejects (e.g. `\`) must not throw here.
+  let pathname;
+  try {
+    pathname = new URL(req.url, 'http://localhost').pathname;
+  } catch {
+    pathname = null;
+  }
 
   if (pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

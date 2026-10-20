@@ -31,6 +31,29 @@ function request(method, requestPath, body) {
   });
 }
 
+function rawRequest(raw) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(PORT, '127.0.0.1');
+    let responded = false;
+    sock.on('connect', () => sock.write(raw));
+    sock.on('data', (chunk) => {
+      responded = true;
+      sock.destroy();
+      resolve(chunk.toString());
+    });
+    sock.on('error', (err) => {
+      if (!responded) reject(err);
+    });
+    sock.on('close', () => {
+      if (!responded) reject(new Error('connection closed without a response'));
+    });
+    sock.setTimeout(2000, () => {
+      if (!responded) reject(new Error('raw request timed out'));
+      sock.destroy();
+    });
+  });
+}
+
 async function waitForPort() {
   const deadline = Date.now() + 2000;
   while (Date.now() < deadline) {
@@ -71,4 +94,14 @@ test('after malformed request, GET /health still returns 200 ok:true', async () 
   const res = await request('GET', '/health');
   assert.equal(res.status, 200);
   assert.equal(JSON.parse(res.body).ok, true);
+});
+
+test('backslash request target gets 404 and the process survives', async () => {
+  // Sent over a raw socket: this target crashes an unguarded URL parse.
+  const res = await rawRequest('GET /\\ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+  assert.ok(/^HTTP\/1\.[01] 404/.test(res), `expected 404, got: ${res.split('\r\n')[0]}`);
+
+  const health = await request('GET', '/health');
+  assert.equal(health.status, 200);
+  assert.equal(JSON.parse(health.body).ok, true);
 });
