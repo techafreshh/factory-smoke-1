@@ -4,6 +4,12 @@ const http = require('node:http');
 const zlib = require('node:zlib');
 const PORT = Number(process.env.PORT) || 8100;
 
+// zlib.gunzip(buffer, cb) is the documented one-call gzip convenience API
+// (nodejs.org/api/zlib.html, "Convenience methods", verified against v26/v22 docs).
+// The legacy zlib.promises namespace was removed, and the newer decompressGzip()
+// iterable API is a transform factory absent from this runtime, so the callback
+// form is the newest stable one-call API available on the installed Node.
+
 const server = http.createServer((req, res) => {
   // No-op error listeners: a client aborting mid-request must not kill the process.
   req.on('error', () => {});
