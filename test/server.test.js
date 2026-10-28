@@ -7,6 +7,8 @@ const net = require('node:net');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
+const zlib = require('node:zlib');
+
 const PORT = 18111;
 
 const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
@@ -14,10 +16,10 @@ const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')],
   stdio: 'ignore',
 });
 
-function request(method, requestPath, body) {
+function request(method, requestPath, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { host: '127.0.0.1', port: PORT, method, path: requestPath },
+      { host: '127.0.0.1', port: PORT, method, path: requestPath, headers },
       (res) => {
         const chunks = [];
         res.on('data', (chunk) => chunks.push(chunk));
@@ -78,6 +80,42 @@ test('GET /health returns 200 with JSON body ok:true', async () => {
   const res = await request('GET', '/health');
   assert.equal(res.status, 200);
   assert.equal(JSON.parse(res.body).ok, true);
+});
+
+test('POST /decompress with gzip body returns 200 and decompressed text', async () => {
+  const gzipped = zlib.gzipSync('hello smoke');
+  const res = await request('POST', '/decompress', gzipped, { 'Content-Encoding': 'gzip' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body, 'hello smoke');
+});
+
+test('POST /decompress with gzip body and no Content-Encoding header still returns 200', async () => {
+  const gzipped = zlib.gzipSync('hello smoke');
+  const res = await request('POST', '/decompress', gzipped);
+  assert.equal(res.status, 200);
+  assert.equal(res.body, 'hello smoke');
+});
+
+test('POST /decompress with non-gzip body returns 400 bad gzip', async () => {
+  const res = await request('POST', '/decompress', 'not gzip');
+  assert.equal(res.status, 400);
+  assert.equal(res.body, 'bad gzip');
+});
+
+test('POST /decompress with empty body returns 400 bad gzip', async () => {
+  const res = await request('POST', '/decompress', '');
+  assert.equal(res.status, 400);
+  assert.equal(res.body, 'bad gzip');
+});
+
+test('server survives a malformed body to /decompress and health stays ok', async () => {
+  const res = await request('POST', '/decompress', Buffer.from([0x1f, 0x8b, 0x00, 0x00]));
+  assert.equal(res.status, 400);
+  assert.equal(res.body, 'bad gzip');
+
+  const health = await request('GET', '/health');
+  assert.equal(health.status, 200);
+  assert.equal(JSON.parse(health.body).ok, true);
 });
 
 test('GET /definitely-not-a-path returns a non-5xx status', async () => {
@@ -143,7 +181,7 @@ test('arbitrary bytes (NULs, invalid UTF-8) get a complete response and health s
 });
 
 test('sustained burst of abusive bodies across paths never breaks health', async () => {
-  const paths = ['/', '/definitely-not-a-path', '/health'];
+  const paths = ['/', '/definitely-not-a-path', '/health', '/decompress'];
   const bodies = [
     '{"truncated',
     'plain junk, not json at all',
