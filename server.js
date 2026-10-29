@@ -54,6 +54,30 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Minimal UI surface so the factory's browser-verification probes exercise a
+  // real render: JS must run (boot -> js-ready) and a click must fetch /health
+  // and paint the JSON — the exact chain a curl probe cannot see.
+  if (pathname === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><html><head><title>factory-smoke-1</title></head><body>
+<h1>factory-smoke-1</h1>
+<button id="go">check health</button>
+<pre id="out">boot</pre>
+<script>
+  document.getElementById('out').textContent = 'js-ready';
+  document.getElementById('go').addEventListener('click', async () => {
+    try {
+      const r = await fetch('/health');
+      document.getElementById('out').textContent = JSON.stringify(await r.json());
+    } catch (e) {
+      document.getElementById('out').textContent = 'fetch-failed';
+    }
+  });
+</script>
+</body></html>`);
+    return;
+  }
+
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'not found' }));
 });
